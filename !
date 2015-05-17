@@ -1,0 +1,63 @@
+sim-profile: SimpleScalar/Alpha Tool Set version 4.0 of December, 2001.
+Copyright (C) 2000-2001 by The Regents of The University of Michigan.
+Copyright (C) 1994-2001 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
+This version of SimpleScalar is licensed for academic non-commercial use only.
+
+sim: command line: ./sim-profile -pcstat sim_num_insn test-math test-math.out 
+
+sim: simulation started @ Fri May 15 20:48:14 2015, options follow:
+
+sim-profile: This simulator implements a functional simulator with
+profiling support.  Run with the `-h' flag to see profiling options
+available.
+
+# -config                     # load configuration from a file
+# -dumpconfig                 # dump configuration to a file
+# -h                    false # print help message    
+# -v                    false # verbose operation     
+# -vr                   false # verbose registers operation
+-trigger:inst               0 # trigger instruction for verbose operation
+# -d                    false # enable debug message  
+# -i                    false # start in Dlite debugger
+-seed                       1 # random number generator seed (0 for timer seed)
+# -q                    false # initialize and terminate immediately
+# -chkpt               <null> # restore EIO trace execution from <fname>
+# -redir:sim           <null> # redirect simulator output to file (non-interactive only)
+# -redir:prog          <null> # redirect simulated program output to file
+-nice                       0 # simulator scheduling priority
+-max:inst                   0 # maximum number of inst's to execute
+-all                    false # enable all profile options
+-iclass                 false # enable instruction class profiling
+-iprof                  false # enable instruction profiling
+-brprof                 false # enable branch instruction profiling
+-amprof                 false # enable address mode profiling
+-segprof                false # enable load/store address segment profiling
+-tsymprof               false # enable text symbol profiling
+-taddrprof              false # enable text address profiling
+-dsymprof               false # enable data symbol profiling
+-internal               false # include compiler-internal symbols during symbol profiling
+# -pcstat        sim_num_insn # profile stat(s) against text addr's (mult uses ok)
+
+sim: ** starting functional simulation **
+pow(12.0, 2.0) == 144.000000
+pow(10.0, 3.0) == 1000.000000
+pow(10.0, -3.0) == 0.001000
+str: 123.456
+x: 123.000000
+str: 123.456
+x: 123.456000
+str: 123.456
+x: 123.456000
+123.456 123.456000 123 1000
+sinh(2.0) = 3.62686
+sinh(3.0) = 10.0179
+h=3.60555
+atan2(3,2) = 0.982794
+pow(3.60555,4.0) = 169
+169 / exp(0.982794 * 5) = 1.24102
+3.93117 + 5*log(3.60555) = 10.3435
+cos(10.3435) = -0.606798,  sin(10.3435) = -0.794856
+x     0.5x
+x0.5     x
+x   0.5x
+-1e-17 == -1e-17 Worked!
