@@ -756,7 +756,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:dl1",
 		 "l1 data cache config, i.e., {<config>|none}",
-		 &cache_dl1_opt, "dl1:128:32:4:l",
+		 &cache_dl1_opt, "dl1:128:32:4:l:0",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -781,7 +781,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:dl2",
 		 "l2 data cache config, i.e., {<config>|none}",
-		 &cache_dl2_opt, "ul2:1024:64:4:l",
+		 &cache_dl2_opt, "ul2:1024:64:4:l:0",
 		 /* print */TRUE, NULL);
 
   opt_reg_int(odb, "-cache:dl2lat",
@@ -791,7 +791,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:il1",
 		 "l1 inst cache config, i.e., {<config>|dl1|dl2|none}",
-		 &cache_il1_opt, "il1:512:32:1:l",
+		 &cache_il1_opt, "il1:512:32:1:l:0",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -845,11 +845,11 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-tlb:itlb",
 		 "instruction TLB config, i.e., {<config>|none}",
-		 &itlb_opt, "itlb:16:4096:4:l", /* print */TRUE, NULL);
+		 &itlb_opt, "itlb:16:4096:4:l:0", /* print */TRUE, NULL);
 
   opt_reg_string(odb, "-tlb:dtlb",
 		 "data TLB config, i.e., {<config>|none}",
-		 &dtlb_opt, "dtlb:32:4096:4:l", /* print */TRUE, NULL);
+		 &dtlb_opt, "dtlb:32:4096:4:l:0", /* print */TRUE, NULL);
 
   opt_reg_int(odb, "-tlb:lat",
 	      "inst/data TLB miss latency (in cycles)",
@@ -899,7 +899,7 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 		  int argc, char **argv)        /* command line arguments */
 {
   char name[128], c;
-  int nsets, bsize, assoc;
+  int nsets, bsize, assoc, mshr;
 
   if (fastfwd_count < 0 || fastfwd_count >= 2147483647)
     fatal("bad fast forward count: %d", fastfwd_count);
@@ -1027,8 +1027,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
     }
   else /* dl1 is defined */
     {
-      if (sscanf(cache_dl1_opt, "%[^:]:%d:%d:%d:%c",
-		 name, &nsets, &bsize, &assoc, &c) != 5)
+      if (sscanf(cache_dl1_opt, "%[^:]:%d:%d:%d:%c:%d",
+		 name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	fatal("bad l1 D-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
       cache_dl1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
@@ -1039,8 +1039,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 	cache_dl2 = NULL;
       else
 	{
-	  if (sscanf(cache_dl2_opt, "%[^:]:%d:%d:%d:%c",
-		     name, &nsets, &bsize, &assoc, &c) != 5)
+	  if (sscanf(cache_dl2_opt, "%[^:]:%d:%d:%d:%c:%d",
+		     name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	    fatal("bad l2 D-cache parms: "
 		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
 	  cache_dl2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
@@ -1083,8 +1083,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
     }
   else /* il1 is defined */
     {
-      if (sscanf(cache_il1_opt, "%[^:]:%d:%d:%d:%c",
-		 name, &nsets, &bsize, &assoc, &c) != 5)
+      if (sscanf(cache_il1_opt, "%[^:]:%d:%d:%d:%c:%d",
+		 name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	fatal("bad l1 I-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
       cache_il1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
@@ -1101,8 +1101,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 	}
       else
 	{
-	  if (sscanf(cache_il2_opt, "%[^:]:%d:%d:%d:%c",
-		     name, &nsets, &bsize, &assoc, &c) != 5)
+	  if (sscanf(cache_il2_opt, "%[^:]:%d:%d:%d:%c:%d",
+		     name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	    fatal("bad l2 I-cache parms: "
 		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
 	  cache_il2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
@@ -1116,8 +1116,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
     itlb = NULL;
   else
     {
-      if (sscanf(itlb_opt, "%[^:]:%d:%d:%d:%c",
-		 name, &nsets, &bsize, &assoc, &c) != 5)
+      if (sscanf(itlb_opt, "%[^:]:%d:%d:%d:%c:%d",
+		 name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	fatal("bad TLB parms: <name>:<nsets>:<page_size>:<assoc>:<repl>");
       itlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
@@ -1130,8 +1130,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
     dtlb = NULL;
   else
     {
-      if (sscanf(dtlb_opt, "%[^:]:%d:%d:%d:%c",
-		 name, &nsets, &bsize, &assoc, &c) != 5)
+      if (sscanf(dtlb_opt, "%[^:]:%d:%d:%d:%c:%d",
+		 name, &nsets, &bsize, &assoc, &c, &mshr) != 6)
 	fatal("bad TLB parms: <name>:<nsets>:<page_size>:<assoc>:<repl>");
       dtlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
