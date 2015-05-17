@@ -148,6 +148,13 @@ struct cache_set_t
 				   access to cache blocks */
 };
 
+struct mshr_blk_t
+{
+  unsigned int valid;
+  md_addr_t tag;
+  int lat;
+};
+
 /* cache definition */
 struct cache_t
 {
@@ -210,6 +217,8 @@ struct cache_t
   /* data blocks */
   byte_t *data;			/* pointer to data blocks allocation */
 
+  int mshr_size;
+  byte_t *mshr;
   /* NOTE: this is a variable-size tail array, this must be the LAST field
      defined in this structure! */
   struct cache_set_t sets[1];	/* each entry is a set */
@@ -223,6 +232,7 @@ cache_create(char *name,		/* name of the cache */
 	     int balloc,		/* allocate data space for blocks? */
 	     int usize,			/* size of user data to alloc w/blks */
 	     int assoc,			/* associativity of cache */
+       int mshr,      /* # of mshr */
 	     enum cache_policy policy,	/* replacement policy w/in sets */
 	     /* block access function, see description w/in struct cache def */
 	     unsigned int (*blk_access_fn)(enum mem_cmd cmd,

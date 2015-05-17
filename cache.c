@@ -75,6 +75,9 @@
 			       ((cp)->balloc				\
 				? (cp)->bsize*sizeof(byte_t) : 0))))
 
+#define MSHR_INDEX(mshr, i) \
+  ((struct mshr_blk_t *)(((char *)(mshr)) + (i) * (sizeof(struct mshr_blk_t))))
+
 /* cache data block accessor, type parameterized */
 #define __CACHE_ACCESS(type, data, bofs)				\
   (*((type *)(((char *)data) + (bofs))))
@@ -263,6 +266,7 @@ cache_create(char *name,		/* name of the cache */
 	     int balloc,		/* allocate data space for blocks? */
 	     int usize,			/* size of user data to alloc w/blks */
 	     int assoc,			/* associativity of cache */
+       int mshr,      /* # of mshr */
 	     enum cache_policy policy,	/* replacement policy w/in sets */
 	     /* block access function, see description w/in struct cache def */
 	     unsigned int (*blk_access_fn)(enum mem_cmd cmd,
@@ -346,6 +350,8 @@ cache_create(char *name,		/* name of the cache */
   cp->data = (byte_t *)calloc(nsets * assoc,
 			      sizeof(struct cache_blk_t) +
 			      (cp->balloc ? (bsize*sizeof(byte_t)) : 0));
+  cp->mshr = (byte_t *)calloc(mshr, sizeof(struct mshr_blk_t));
+  cp->mshr_size = mshr;
   if (!cp->data)
     fatal("out of virtual memory");
 
@@ -510,7 +516,8 @@ cache_access(struct cache_t *cp,	/* cache to access */
   md_addr_t set = CACHE_SET(cp, addr);
   md_addr_t bofs = CACHE_BLK(cp, addr);
   struct cache_blk_t *blk, *repl;
-  int lat = 0;
+  struct mshr_blk_t *mshr_blk;
+  int lat = 0, i;
 
   /* default replacement address */
   if (repl_addr)
@@ -560,6 +567,12 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	    goto cache_hit;
 	}
     }
+  for (i = 0; i < cp->mshr_size; i++)
+  {
+    mshr_blk = MSHR_INDEX(cp->mshr, i);
+    if(mshr_blk->valid && mshr_blk->tag == tag)
+      goto mshr_hit;
+  }
 
   /* cache block not found */
 
@@ -648,14 +661,39 @@ cache_access(struct cache_t *cp,	/* cache to access */
   if (cp->hsize)
     link_htab_ent(cp, &cp->sets[set], repl);
 
+
+  for (i = 0; i < cp->mshr_size; i++)
+  {
+    mshr_blk = MSHR_INDEX(cp->mshr, i);
+    if(!mshr_blk->valid)
+    {
+      mshr_blk->tag = tag;
+      mshr_blk->lat = lat + now;
+      mshr_blk->valid = 1;
+      break;
+    }
+  }
+
   /* return latency of the operation */
   return lat;
 
+ mshr_hit:
+//  fatal("%d", cp->mshr_size);
+  cp->misses++;
+  return (mshr_blk->lat - now);
 
  cache_hit: /* slow hit handler */
   
   /* **HIT** */
   cp->hits++;
+
+  for (i = 0; i < cp->mshr_size; i++)
+  {
+    mshr_blk = MSHR_INDEX(cp->mshr, i);
+    if(mshr_blk->valid && mshr_blk->tag == tag)
+      mshr_blk->valid = 0;
+  }
+
 
   /* copy data out of cache block, if block exists */
   if (cp->balloc)
@@ -691,6 +729,13 @@ cache_access(struct cache_t *cp,	/* cache to access */
   
   /* **FAST HIT** */
   cp->hits++;
+  
+  for (i = 0; i < cp->mshr_size; i++)
+  {
+    mshr_blk = MSHR_INDEX(cp->mshr, i);
+    if(mshr_blk->valid && mshr_blk->tag == tag)
+      mshr_blk->valid = 0;
+  }
 
   /* copy data out of cache block, if block exists */
   if (cp->balloc)
