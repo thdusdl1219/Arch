@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <time.h>
 
 #include "host.h"
 #include "misc.h"
@@ -662,7 +663,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
     link_htab_ent(cp, &cp->sets[set], repl);
 
 
-  for (i = 0; i < cp->mshr_size; i++)
+  for (i = 0; i < cp->mshr_size;)
   {
     mshr_blk = MSHR_INDEX(cp->mshr, i);
     if(!mshr_blk->valid)
@@ -671,6 +672,16 @@ cache_access(struct cache_t *cp,	/* cache to access */
       mshr_blk->lat = lat + now;
       mshr_blk->valid = 1;
       break;
+    }
+    i++;
+    if(i == cp->mshr_size)
+    {
+      int j;
+      srand(time(NULL));
+      j = (rand() % cp->mshr_size);
+      mshr_blk = MSHR_INDEX(cp->mshr, j);
+      mshr_blk->tag = tag;
+      mshr_blk->lat = lat + now;
     }
   }
 
