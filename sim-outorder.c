@@ -54,6 +54,7 @@
 #include <math.h>
 #include <assert.h>
 #include <signal.h>
+#include <string.h>
 
 #include "host.h"
 #include "misc.h"
@@ -79,6 +80,25 @@
  * This simulator is a performance simulator, tracking the latency of all
  * pipeline operations.
  */
+
+
+static int FMT_fetch, FMT_dispatch_head, FMT_dispatch_tail;
+static int FMT_num;
+static int global_l1i_penalty, global_l2i_penalty, global_itlb_penalty, global_branch_mispenalty;
+static int global_dl1_penalty, global_dl2_penalty, global_dtlb_penalty, global_unit_penalty;
+static int init_l1i_penalty, init_l2i_penalty, init_itlb_penalty;
+
+struct FMT_entry {
+  unsigned int ruu_id;
+  int mispred_bit;
+  int branch_penalty;
+  int l1i_cache_penalty;
+  int l2i_cache_penalty;
+  int itlb_penalty;
+};
+
+static struct FMT_entry *FMT;
+
 
 /* simulated registers */
 static struct regs_t regs;
@@ -156,6 +176,8 @@ static int ruu_commit_width;
 
 /* register update unit (RUU) size */
 static int RUU_size = 8;
+
+static int FMT_size = 8;
 
 /* load/store queue (LSQ) size */
 static int LSQ_size = 4;
@@ -504,8 +526,10 @@ if (cache_il2)
       /* access next level of inst cache hierarchy */
       lat = cache_access(cache_il2, cmd, baddr, NULL, bsize,
 			 /* now */now, /* pudata */NULL, /* repl addr */NULL);
-      if (cmd == Read)
-	return lat;
+      if (cmd == Read) 
+      {
+	      return lat;
+      }
       else
 	panic("writes to instruction memory not supported");
     }
@@ -527,9 +551,13 @@ il2_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
 	      struct cache_blk_t *blk,	/* ptr to block in upper level */
 	      tick_t now)		/* time of access */
 {
+  int lat;
   /* this is a miss to the lowest level, so access main memory */
   if (cmd == Read)
-    return mem_access_latency(bsize);
+  {
+    lat = mem_access_latency(bsize);
+    return lat;
+  }
   else
     panic("writes to instruction memory not supported");
 }
@@ -554,6 +582,7 @@ itlb_access_fn(enum mem_cmd cmd,	/* access cmd, Read or Write */
 
   /* fake translation, for now... */
   *phy_page_ptr = 0;
+
 
   /* return tlb miss latency */
   return tlb_miss_lat;
@@ -739,6 +768,11 @@ sim_reg_options(struct opt_odb_t *odb)
   opt_reg_int(odb, "-ruu:size",
 	      "register update unit (RUU) size",
 	      &RUU_size, /* default */16,
+	      /* print */TRUE, /* format */NULL);
+
+  opt_reg_int(odb, "-fmt:size",
+	      "forntend miss event table (FMT) size",
+	      &FMT_size, /* default */16,
 	      /* print */TRUE, /* format */NULL);
 
   /* memory scheduler options  */
@@ -1011,6 +1045,9 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 
   if (RUU_size < 2 || (RUU_size & (RUU_size-1)) != 0)
     fatal("RUU size must be a positive number > 1 and a power of two");
+
+  if (FMT_size < 2 || (FMT_size & (FMT_size-1)) != 0)
+    fatal("FMT size must be a positive number > 1 and a power of two");
 
   if (LSQ_size < 2 || (LSQ_size & (LSQ_size-1)) != 0)
     fatal("LSQ size must be a positive number > 1 and a power of two");
@@ -1376,6 +1413,7 @@ sim_reg_stats(struct stat_sdb_t *sdb)   /* stats database */
 
 /* forward declarations */
 static void ruu_init(void);
+static void FMT_init(void);
 static void lsq_init(void);
 static void rslink_init(int nlinks);
 static void eventq_init(void);
@@ -1456,6 +1494,7 @@ sim_load_prog(char *fname,		/* program to load */
   readyq_init();
   ruu_init();
   lsq_init();
+  FMT_init();
 
   /* initialize the DLite debugger */
   dlite_init(simoo_reg_obj, simoo_mem_obj, simoo_mstate_obj);
@@ -1496,6 +1535,20 @@ typedef unsigned int INST_SEQ_TYPE;
 /* total output dependencies possible */
 #define MAX_ODEPS               2
 
+
+static void
+FMT_init(void)
+{
+    FMT = calloc(FMT_size, sizeof(struct FMT_entry));
+    if (!FMT)
+      fatal("out of virtual memory!");
+
+    FMT_num = 0;
+    FMT_fetch = FMT_dispatch_head = FMT_dispatch_tail = -1;
+
+}
+
+
 /* a register update unit (RUU) station, this record is contained in the
    processors RUU, which serves as a collection of ordered reservations
    stations.  The reservation stations capture register results and await
@@ -1527,6 +1580,11 @@ struct RUU_station {
 					   sort the ready list and tag inst */
   unsigned int ptrace_seq;		/* pipetrace sequence number */
   int slip;
+
+  int dl1_miss;
+  int dl2_miss;
+  int dtlb_miss;
+
   /* instruction status */
   int queued;				/* operands ready and queued */
   int issued;				/* operation is/was executing */
@@ -2279,6 +2337,21 @@ ruu_commit(void)
       ptrace_newstage(RUU[RUU_head].ptrace_seq, PST_COMMIT, events);
       ptrace_endinst(RUU[RUU_head].ptrace_seq);
 
+      if(FMT[FMT_dispatch_head + 1].ruu_id == RUU[RUU_head].seq)
+      {
+        FMT_dispatch_head = (FMT_dispatch_head + 1) % FMT_size;
+        if(FMT[FMT_dispatch_head].mispred_bit)
+        {
+          global_branch_mispenalty += FMT[FMT_dispatch_head].branch_penalty;
+        }
+        else
+        {
+          global_l1i_penalty += FMT[FMT_dispatch_head].l1i_cache_penalty;
+          global_l2i_penalty += FMT[FMT_dispatch_head].l2i_cache_penalty;
+          global_itlb_penalty += FMT[FMT_dispatch_head].itlb_penalty;
+        }
+      }
+
       /* commit head entry of RUU */
       RUU_head = (RUU_head + 1) % RUU_size;
       RUU_num--;
@@ -2403,10 +2476,12 @@ ruu_writeback(void)
 {
   int i;
   struct RUU_station *rs;
+  int check = 0;  
 
   /* service all completed events */
   while ((rs = eventq_next_event()))
     {
+      check = 1;
       /* RS has completed execution and (possibly) produced a result */
       if (!OPERANDS_READY(rs) || rs->queued || !rs->issued || rs->completed)
 	panic("inst completed and !ready, !issued, or completed");
@@ -2536,6 +2611,28 @@ ruu_writeback(void)
 	} /* for all outputs */
 
    } /* for all writeback events */
+  if(check == 0 && rs == NULL && !event_queue)
+  {
+    if(RUU_num == RUU_size)
+    {
+      if(event_queue->rs->dl1_miss)
+      {
+        global_dl1_penalty++;
+      }
+      else if(event_queue->rs->dl2_miss)
+      {
+        global_dl2_penalty++;
+      }
+      else if(event_queue->rs->dtlb_miss)
+      {
+        global_dtlb_penalty++;
+      }
+      else
+      {
+        global_unit_penalty++;
+      }
+    }
+  }
 
 }
 
@@ -2783,6 +2880,18 @@ ruu_issue(void)
 			      /* D-cache/D-TLB accesses occur in parallel */
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
+        if(load_lat > cache_dl1_lat && load_lat <= cache_dl2_lat)
+        {
+          rs->dl1_miss = 1;
+        }
+        else if(load_lat == tlb_lat)
+        {
+          rs->dtlb_miss = 1;
+        }
+        else
+        {
+          rs->dl2_miss = 1;
+        }
 
 			  /* use computed cache access latency */
 			  eventq_queue_event(rs, sim_cycle + load_lat);
@@ -3954,6 +4063,9 @@ ruu_dispatch(void)
 	  rs->spec_mode = spec_mode;
 	  rs->addr = 0;
 	  /* rs->tag is already set */
+    rs->dl1_miss = FALSE;
+    rs->dl2_miss = FALSE;
+    rs->dtlb_miss = FALSE;
 	  rs->seq = ++inst_seq;
 	  rs->queued = rs->issued = rs->completed = FALSE;
 	  rs->ptrace_seq = pseq;
@@ -3975,6 +4087,9 @@ ruu_dispatch(void)
 	      lsq->in_LSQ = TRUE;
 	      lsq->ea_comp = FALSE;
 	      lsq->recover_inst = FALSE;
+        lsq->dl1_miss = FALSE;
+        lsq->dl2_miss = FALSE;
+        lsq->dtlb_miss = FALSE;
 	      lsq->dir_update.pdir1 = lsq->dir_update.pdir2 = NULL;
 	      lsq->dir_update.pmeta = NULL;
 	      lsq->stack_recover_idx = 0;
@@ -4088,7 +4203,11 @@ ruu_dispatch(void)
 	     non-speculative state is committed into the BTB */
 	  if (MD_OP_FLAGS(op) & F_CTRL)
 	    {
-	      sim_num_branches++;
+        FMT_dispatch_tail = (FMT_dispatch_tail + 1) % FMT_size;
+        FMT[FMT_dispatch_tail].ruu_id = rs->seq;
+        FMT[FMT_dispatch_tail].mispred_bit = (pred_PC == regs.regs_NPC);
+	      
+        sim_num_branches++;
 	      if (pred && bpred_spec_update == spec_ID)
 		{
 		  bpred_update(pred,
@@ -4280,6 +4399,41 @@ ruu_fetch(void)
 	      /* I-cache/I-TLB accesses occur in parallel */
 	      lat = MAX(tlb_lat, lat);
 	    }
+    
+    if ((lat > cache_il1_lat) && (lat <= cache_il2_lat))
+    {
+        if(FMT_fetch == -1)
+        {
+          init_l1i_penalty += lat;
+        }
+        else
+        {
+          FMT[FMT_fetch].l1i_cache_penalty += lat;
+        }
+    }
+    else if (lat == tlb_lat)
+    {
+      if(FMT_fetch == -1)
+      {
+        init_itlb_penalty += lat;
+      }
+      else
+      {
+        FMT[FMT_fetch].itlb_penalty += lat;
+      }
+    }
+    else
+    {
+      if(FMT_fetch == -1)
+      {
+        init_l2i_penalty += lat;
+      }
+      else
+      {
+        FMT[FMT_fetch].l2i_cache_penalty += lat;
+      }
+
+    }
 
 	  /* I-cache/I-TLB miss? assumes I-cache hit >= I-TLB hit */
 	  if (lat != cache_il1_lat)
@@ -4358,6 +4512,20 @@ ruu_fetch(void)
 		       | (last_inst_tmissed ? PEV_TLBMISS : 0)));
       last_inst_missed = FALSE;
       last_inst_tmissed = FALSE;
+
+      if (MD_OP_FLAGS(op) & F_CTRL)
+      {
+        if(FMT_fetch == -1)
+        {
+            global_l1i_penalty += init_l1i_penalty;
+            global_l2i_penalty += init_l2i_penalty;
+            global_itlb_penalty += init_itlb_penalty;
+        }
+        FMT_fetch = (FMT_fetch + 1) % FMT_size;
+        FMT_num++;
+        memset(&FMT[FMT_fetch], 0, sizeof(struct FMT_entry)); 
+      }
+
 
       /* allocate an additional ptrace_seq for internal ld/st uop */
       if (MD_OP_FLAGS(op) & F_MEM) ptrace_seq++;
@@ -4625,6 +4793,14 @@ sim_main(void)
       RUU_fcount += ((RUU_num == RUU_size) ? 1 : 0);
       LSQ_count += LSQ_num;
       LSQ_fcount += ((LSQ_num == LSQ_size) ? 1 : 0);
+
+      int i = 0;
+
+      for(i = FMT_dispatch_head + 1; i <= FMT_dispatch_tail; i++)
+      {
+        if(RUU_num != RUU_size)
+            FMT[i].branch_penalty++;
+      }
 
       /* go to next cycle */
       sim_cycle++;
