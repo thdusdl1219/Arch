@@ -2337,12 +2337,14 @@ ruu_commit(void)
       ptrace_newstage(RUU[RUU_head].ptrace_seq, PST_COMMIT, events);
       ptrace_endinst(RUU[RUU_head].ptrace_seq);
 
-      if(FMT[FMT_dispatch_head + 1].ruu_id == RUU[RUU_head].seq)
+      if(MD_OP_FLAGS(RUU[RUU_head].op) & F_CTRL)
       {
         FMT_dispatch_head = (FMT_dispatch_head + 1) % FMT_size;
         if(FMT[FMT_dispatch_head].mispred_bit)
         {
           global_branch_mispenalty += FMT[FMT_dispatch_head].branch_penalty;
+       //   FMT_dispatch_tail = FMT_dispatch_head;
+       //   FMT_fetch = FMT_dispatch_tail;
         }
         else
         {
@@ -2611,28 +2613,8 @@ ruu_writeback(void)
 	} /* for all outputs */
 
    } /* for all writeback events */
-  if(check == 0 && rs == NULL && !event_queue)
-  {
-    if(RUU_num == RUU_size)
-    {
-      if(event_queue->rs->dl1_miss)
-      {
-        global_dl1_penalty++;
-      }
-      else if(event_queue->rs->dl2_miss)
-      {
-        global_dl2_penalty++;
-      }
-      else if(event_queue->rs->dtlb_miss)
-      {
-        global_dtlb_penalty++;
-      }
-      else
-      {
-        global_unit_penalty++;
-      }
-    }
-  }
+
+      static int counter;
 
 }
 
@@ -2880,17 +2862,19 @@ ruu_issue(void)
 			      /* D-cache/D-TLB accesses occur in parallel */
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
-        if(load_lat > cache_dl1_lat && load_lat <= cache_dl2_lat)
+        static int counter;
+        if(load_lat <= cache_dl2_lat && load_lat > cache_dl1_lat)
         {
           rs->dl1_miss = 1;
         }
-        else if(load_lat == tlb_lat)
+        else if(load_lat == tlb_miss_lat && (tlb_miss_lat != 1))
         {
           rs->dtlb_miss = 1;
         }
-        else
+        else if(load_lat > cache_dl2_lat)
         {
           rs->dl2_miss = 1;
+          printf("dl2 miss! : %d %d %d\n", counter++, rs->tag, rs->seq);
         }
 
 			  /* use computed cache access latency */
@@ -4205,7 +4189,7 @@ ruu_dispatch(void)
 	    {
         FMT_dispatch_tail = (FMT_dispatch_tail + 1) % FMT_size;
         FMT[FMT_dispatch_tail].ruu_id = rs->seq;
-        FMT[FMT_dispatch_tail].mispred_bit = (pred_PC == regs.regs_NPC);
+        FMT[FMT_dispatch_tail].mispred_bit = (pred_PC != regs.regs_NPC);
 	      
         sim_num_branches++;
 	      if (pred && bpred_spec_update == spec_ID)
@@ -4400,7 +4384,7 @@ ruu_fetch(void)
 	      lat = MAX(tlb_lat, lat);
 	    }
     
-    if ((lat > cache_il1_lat) && (lat <= cache_il2_lat))
+    if ((lat <= cache_il2_lat) && (lat > cache_il1_lat))
     {
         if(FMT_fetch == -1)
         {
@@ -4411,7 +4395,7 @@ ruu_fetch(void)
           FMT[FMT_fetch].l1i_cache_penalty += lat;
         }
     }
-    else if (lat == tlb_lat)
+    else if (lat == tlb_miss_lat && (tlb_miss_lat != 1))
     {
       if(FMT_fetch == -1)
       {
@@ -4422,7 +4406,7 @@ ruu_fetch(void)
         FMT[FMT_fetch].itlb_penalty += lat;
       }
     }
-    else
+    else if (lat > cache_il2_lat)
     {
       if(FMT_fetch == -1)
       {
@@ -4784,7 +4768,10 @@ sim_main(void)
       if (!ruu_fetch_issue_delay)
 	ruu_fetch();
       else
+      {
 	ruu_fetch_issue_delay--;
+        //printf("ruu fetch delay : %d\n", ruu_fetch_issue_delay);
+      }
 
       /* update buffer occupancy stats */
       IFQ_count += fetch_num;
@@ -4796,18 +4783,76 @@ sim_main(void)
 
       int i = 0;
 
-      for(i = FMT_dispatch_head + 1; i <= FMT_dispatch_tail; i++)
+      if(FMT_dispatch_tail > FMT_dispatch_head)
       {
-        if(RUU_num != RUU_size)
-            FMT[i].branch_penalty++;
+        for(i = FMT_dispatch_head + 1; i <= FMT_dispatch_tail; i++)
+        { 
+            if(RUU_num != RUU_size)
+                FMT[i].branch_penalty++;
+        }
       }
+      else if(FMT_dispatch_tail != FMT_dispatch_head)
+      {
+    //    printf("FMT tail head fetch : %d %d %d\n", FMT_dispatch_tail, FMT_dispatch_head, FMT_fetch);
+        for(i = 0; i <= FMT_dispatch_tail; i++)
+        {
+            if(RUU_num != RUU_size)
+                FMT[i].branch_penalty++;
+        }
+        for(i = FMT_dispatch_head + 1; i < FMT_size; i++)
+        {
+            if(RUU_num != RUU_size)
+                FMT[i].branch_penalty++;
+        }
+      }
+
+static int counter;
+  //  printf("RUU_num , RUU_size :  %d %d \n", RUU_num, RUU_size);
+    if(RUU_num == RUU_size)
+    {
+      int check = 0;
+      for(i = 0; i < RUU_size; i++)
+      {
+      printf("%d \n", RUU[i].seq);
+        if(RUU[i].dl2_miss)
+        {
+      printf("dl1 dl2 dtlb counter event_queue : %d %d %p\n", RUU[i].dl2_miss, ++counter, RUU[RUU_head]);
+          check = 1; 
+          global_dl2_penalty++;
+        }
+        else if(RUU[i].dtlb_miss)
+        {
+          check = 1;
+          global_dtlb_penalty++;
+        }
+      }
+      if(RUU[RUU_head].dl1_miss)
+      {
+        global_dl1_penalty++;
+      }
+      else if(check == 0)
+      {
+        global_unit_penalty++;
+      }
+    }
 
       /* go to next cycle */
       sim_cycle++;
 
       /* finish early? */
       if (max_insts && sim_num_insn >= max_insts)
-	return;
-      if (program_complete) return;
+      {
+        printf("%d %d %d %d %d %d %d %d\n", global_l1i_penalty, global_l2i_penalty, 
+            global_itlb_penalty, global_dl1_penalty, global_dl2_penalty, global_dtlb_penalty,
+            global_branch_mispenalty, global_unit_penalty);
+        return;
+      }
+      if (program_complete) 
+      {
+        printf("%d %d %d %d %d %d %d %d\n", global_l1i_penalty, global_l2i_penalty, 
+            global_itlb_penalty, global_dl1_penalty, global_dl2_penalty, global_dtlb_penalty,
+            global_branch_mispenalty, global_unit_penalty);
+        return;
+      }
     }
 }
