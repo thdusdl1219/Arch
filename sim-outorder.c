@@ -1191,7 +1191,7 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
   if (mem_nelt != 2)
     fatal("bad memory access latency (<first_chunk> <inter_chunk>)");
 
-  if (mem_lat[0] < 1 || mem_lat[1] < 1)
+  if (mem_lat[0] < 1 || mem_lat[1] < 0)
     fatal("all memory access latencies must be greater than zero");
 
   if (mem_bus_width < 1 || (mem_bus_width & (mem_bus_width-1)) != 0)
@@ -2268,7 +2268,9 @@ ruu_commit(void)
 			cache_access(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
 				     NULL, 4, sim_cycle, NULL, NULL);
 		      if (lat > cache_dl1_lat)
-			events |= PEV_CACHEMISS;
+          {
+			      events |= PEV_CACHEMISS;
+          }
 		    }
 
 		  /* all loads and stores must to access D-TLB */
@@ -2343,8 +2345,6 @@ ruu_commit(void)
         if(FMT[FMT_dispatch_head].mispred_bit)
         {
           global_branch_mispenalty += FMT[FMT_dispatch_head].branch_penalty;
-       //   FMT_dispatch_tail = FMT_dispatch_head;
-       //   FMT_fetch = FMT_dispatch_tail;
         }
         else
         {
@@ -2507,7 +2507,22 @@ ruu_writeback(void)
 	  ruu_fetch_issue_delay += ruu_branch_penalty;
 
 	  /* continue writeback of the branch/control instruction */
-	}
+	
+    int FMT_index = 0;
+    for(FMT_index = 0; FMT_index < FMT_size; FMT_index++)
+    {
+      if(rs->seq == FMT[FMT_index].ruu_id)
+      {
+        break;
+      }
+    }
+    if(FMT_index == FMT_size)
+    {
+      panic("FMT_index == FMT_size?");
+    }
+    FMT_dispatch_tail = FMT_index;
+    FMT_fetch = (FMT_index + 1) % FMT_size;
+  }
 
       /* if we speculatively update branch-predictor, do it here */
       if (pred
@@ -2838,9 +2853,13 @@ ruu_issue(void)
 				    cache_access(cache_dl1, Read,
 						 (rs->addr & ~3), NULL, 4,
 						 sim_cycle, NULL, NULL);
+            //static int co;
+            //printf("dl miss ! %d %d\n", co++, load_lat);
 				  if (load_lat > cache_dl1_lat)
-				    events |= PEV_CACHEMISS;
+          {
+				    events |= PEV_CACHEMISS;}
 				}
+          
 			      else
 				{
 				  /* no caches defined, just use op latency */
@@ -2862,19 +2881,26 @@ ruu_issue(void)
 			      /* D-cache/D-TLB accesses occur in parallel */
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
-        static int counter;
+        static int counter1, co2, co3;
         if(load_lat <= cache_dl2_lat && load_lat > cache_dl1_lat)
         {
           rs->dl1_miss = 1;
+//          printf("dl1 miss! : %d %d\n", counter1++, load_lat);
         }
         else if(load_lat == tlb_miss_lat && (tlb_miss_lat != 1))
         {
           rs->dtlb_miss = 1;
+//          printf("dtlb miss! : %d %d \n", co2++, load_lat);
         }
         else if(load_lat > cache_dl2_lat)
         {
           rs->dl2_miss = 1;
-          printf("dl2 miss! : %d %d %d\n", counter++, rs->tag, rs->seq);
+//          printf("dl2 miss! : %d %d \n", co3++, load_lat);
+        }
+        if(cache_dl2_lat == 1)
+        {
+        //  printf("hi\n");
+          load_lat = 1;
         }
 
 			  /* use computed cache access latency */
@@ -4383,7 +4409,34 @@ ruu_fetch(void)
 	      /* I-cache/I-TLB accesses occur in parallel */
 	      lat = MAX(tlb_lat, lat);
 	    }
-    
+
+    if(lat == tlb_miss_lat && (tlb_miss_lat != 1))
+    {
+      if(FMT_fetch == -1)
+      {
+        init_itlb_penalty += lat;
+      }
+      else
+      {
+        FMT[FMT_fetch].itlb_penalty += lat;
+      }
+    }
+    else if(lat > cache_il2_lat)
+    {
+      if(FMT_fetch == -1)
+         init_l2i_penalty += lat;
+      else
+        FMT[FMT_fetch].l2i_cache_penalty += lat;
+
+    }
+    else if(lat > cache_il1_lat)
+    {
+      if(FMT_fetch == -1)
+        init_l1i_penalty += lat;
+      else
+        FMT[FMT_fetch].l1i_cache_penalty += lat;
+    }
+    /*
     if ((lat <= cache_il2_lat) && (lat > cache_il1_lat))
     {
         if(FMT_fetch == -1)
@@ -4417,7 +4470,7 @@ ruu_fetch(void)
         FMT[FMT_fetch].l2i_cache_penalty += lat;
       }
 
-    }
+    }*/
 
 	  /* I-cache/I-TLB miss? assumes I-cache hit >= I-TLB hit */
 	  if (lat != cache_il1_lat)
@@ -4783,6 +4836,15 @@ sim_main(void)
 
       int i = 0;
 
+      if(RUU_num != RUU_size)
+      {
+        for(i = 0; i < (FMT_dispatch_tail - FMT_dispatch_head + FMT_size) % FMT_size; i++)
+        {
+          FMT[(i + FMT_dispatch_head + 1)%FMT_size].branch_penalty++;
+        }
+
+      }
+    /*
       if(FMT_dispatch_tail > FMT_dispatch_head)
       {
         for(i = FMT_dispatch_head + 1; i <= FMT_dispatch_tail; i++)
@@ -4805,36 +4867,91 @@ sim_main(void)
                 FMT[i].branch_penalty++;
         }
       }
-
-static int counter;
-  //  printf("RUU_num , RUU_size :  %d %d \n", RUU_num, RUU_size);
-    if(RUU_num == RUU_size)
+*/
+      static int counter;
+      //  printf("RUU_num , RUU_size :  %d %d \n", RUU_num, RUU_size);
+      if(event_queue && event_queue->x.when > sim_cycle + 1)
     {
-      int check = 0;
-      for(i = 0; i < RUU_size; i++)
+      if(RUU_num == RUU_size)
       {
-      printf("%d \n", RUU[i].seq);
-        if(RUU[i].dl2_miss)
+        int check = 0;
+            if(event_queue->rs->dl2_miss)
+            {
+              check = 1;
+//              printf("dl2 %d %d\n", global_dl2_penalty, sim_cycle);
+              global_dl2_penalty++;
+            }
+            else if(event_queue->rs->dtlb_miss)
+            {
+              check = 1;
+              global_dtlb_penalty++;
+            }
+            else
+            {
+                global_unit_penalty++;
+            }
+          }
+
+            if(event_queue->rs->dl1_miss)
+            {
+              global_dl1_penalty++;
+            }
+      }
+/*
+      if(RUU_num == RUU_size)
+      {
+        int check = 0;
+        if(LSQ_num == LSQ_size)
         {
-      printf("dl1 dl2 dtlb counter event_queue : %d %d %p\n", RUU[i].dl2_miss, ++counter, RUU[RUU_head]);
-          check = 1; 
-          global_dl2_penalty++;
+          for(i = 0; i < LSQ_size; i++)
+          {
+            //printf("%d \n", RUU[i].seq);
+            if(LSQ[i].dl2_miss)
+            {
+              check = 1; 
+              global_dl2_penalty++;
+              break;
+            }
+            else if(LSQ[i].dtlb_miss)
+            {
+              check = 1;
+              global_dtlb_penalty++;
+              break;
+            }
+            else if(RUU[RUU_head].dl1_miss)
+            {
+              global_dl1_penalty++;
+            }
+          }
         }
-        else if(RUU[i].dtlb_miss)
+        else 
         {
-          check = 1;
-          global_dtlb_penalty++;
+          for(i = 0; i < (LSQ_tail - LSQ_head + LSQ_size) % LSQ_size; i++)
+          {
+            //printf("%d \n", RUU[i].seq);
+            if(LSQ[i].dl2_miss)
+            {
+              check = 1; 
+              global_dl2_penalty++;
+              break;
+            }
+            else if(LSQ[i].dtlb_miss)
+            {
+              check = 1;
+              global_dtlb_penalty++;
+              break;
+            }
+            else if(RUU[RUU_head].dl1_miss)
+            {
+              global_dl1_penalty++;
+            }
+          }
         }
-      }
-      if(RUU[RUU_head].dl1_miss)
-      {
-        global_dl1_penalty++;
-      }
-      else if(check == 0)
-      {
-        global_unit_penalty++;
-      }
-    }
+        if(check == 0)
+        {
+          global_unit_penalty++;
+        }
+*/
 
       /* go to next cycle */
       sim_cycle++;
