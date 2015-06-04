@@ -4421,7 +4421,7 @@ ruu_fetch(void)
         FMT[FMT_fetch].itlb_penalty += lat;
       }
     }
-    else if(lat > cache_il2_lat)
+    else if(lat > cache_il2_lat && (cache_il2_lat != 1))
     {
       if(FMT_fetch == -1)
          init_l2i_penalty += lat;
@@ -4429,13 +4429,15 @@ ruu_fetch(void)
         FMT[FMT_fetch].l2i_cache_penalty += lat;
 
     }
-    else if(lat > cache_il1_lat)
+    else if(lat > cache_il1_lat && (cache_il2_lat != 1))
     {
       if(FMT_fetch == -1)
         init_l1i_penalty += lat;
       else
         FMT[FMT_fetch].l1i_cache_penalty += lat;
     }
+    if(cache_il2_lat == 1)
+        lat = cache_il1_lat;
     /*
     if ((lat <= cache_il2_lat) && (lat > cache_il1_lat))
     {
