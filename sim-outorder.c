@@ -81,6 +81,7 @@
  * pipeline operations.
  */
 
+static int deb_count;
 
 static int FMT_fetch, FMT_dispatch_head, FMT_dispatch_tail;
 static int FMT_num;
@@ -1581,6 +1582,7 @@ struct RUU_station {
   unsigned int ptrace_seq;		/* pipetrace sequence number */
   int slip;
 
+  int op_miss;
   int dl1_miss;
   int dl2_miss;
   int dtlb_miss;
@@ -2342,11 +2344,7 @@ ruu_commit(void)
       if(MD_OP_FLAGS(RUU[RUU_head].op) & F_CTRL)
       {
         FMT_dispatch_head = (FMT_dispatch_head + 1) % FMT_size;
-        if(FMT[FMT_dispatch_head].mispred_bit)
-        {
-          global_branch_mispenalty += FMT[FMT_dispatch_head].branch_penalty;
-        }
-        else
+        if(!FMT[FMT_dispatch_head].mispred_bit)
         {
           global_l1i_penalty += FMT[FMT_dispatch_head].l1i_cache_penalty;
           global_l2i_penalty += FMT[FMT_dispatch_head].l2i_cache_penalty;
@@ -2522,6 +2520,7 @@ ruu_writeback(void)
     }
     FMT_dispatch_tail = FMT_index;
     FMT_fetch = (FMT_index + 1) % FMT_size;
+    global_branch_mispenalty += FMT[FMT_index].branch_penalty;
   }
 
       /* if we speculatively update branch-predictor, do it here */
@@ -2836,7 +2835,6 @@ ruu_issue(void)
 				    break;
 				}
 			    }
-
 			  /* was the value store forwared from the LSQ? */
 			  if (!load_lat)
 			    {
@@ -2882,6 +2880,32 @@ ruu_issue(void)
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
         static int counter1, co2, co3;
+       
+        if(load_lat == tlb_miss_lat && (tlb_miss_lat != 1))
+        {
+          rs->dtlb_miss = 1;
+        }
+        else if(load_lat > cache_dl2_lat && (cache_dl2_lat != 1))
+        {
+          rs->dl2_miss = 1;
+        }
+        else if(load_lat > cache_dl1_lat && (cache_dl2_lat != 1))
+        {
+          rs->dl1_miss = 1;
+        }
+        if(cache_dl2_lat == 1)
+        {
+          load_lat = cache_dl1_lat;
+        }
+    //    else if(mem_lat[0] == 1)
+     //   {
+      //    if(load_lat != cache_dl1_lat)
+       //   {
+        //    load_lat = cache_dl2_lat;
+         // }
+       // }
+        
+        /*
         if(load_lat <= cache_dl2_lat && load_lat > cache_dl1_lat)
         {
           rs->dl1_miss = 1;
@@ -2900,8 +2924,9 @@ ruu_issue(void)
         if(cache_dl2_lat == 1)
         {
         //  printf("hi\n");
-          load_lat = 1;
+          load_lat = cache_dl1_lat;
         }
+        */
 
 			  /* use computed cache access latency */
 			  eventq_queue_event(rs, sim_cycle + load_lat);
@@ -2915,6 +2940,7 @@ ruu_issue(void)
 			{
 			  /* use deterministic functional unit latency */
 			  eventq_queue_event(rs, sim_cycle + fu->oplat);
+        rs->op_miss = 1;
 
 			  /* entered execute stage, indicate in pipe trace */
 			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE, 
@@ -4842,7 +4868,7 @@ sim_main(void)
       {
         for(i = 0; i < (FMT_dispatch_tail - FMT_dispatch_head + FMT_size) % FMT_size; i++)
         {
-          FMT[(i + FMT_dispatch_head + 1)%FMT_size].branch_penalty++;
+          FMT[(i + FMT_dispatch_head + 1) % FMT_size].branch_penalty++;
         }
 
       }
@@ -4872,33 +4898,40 @@ sim_main(void)
 */
       static int counter;
       //  printf("RUU_num , RUU_size :  %d %d \n", RUU_num, RUU_size);
-      if(event_queue && event_queue->x.when > sim_cycle + 1)
+      if(event_queue && event_queue->x.when > sim_cycle + cache_dl1_lat)
     {
       if(RUU_num == RUU_size)
       {
-        int check = 0;
             if(event_queue->rs->dl2_miss)
             {
-              check = 1;
 //              printf("dl2 %d %d\n", global_dl2_penalty, sim_cycle);
               global_dl2_penalty++;
             }
             else if(event_queue->rs->dtlb_miss)
             {
-              check = 1;
               global_dtlb_penalty++;
             }
             else
             {
-                global_unit_penalty++;
-            }
-          }
+               if(!event_queue->rs->op_miss && !event_queue->rs->dl1_miss)
+                 panic("some is wrong!");
 
+            }
+       }
+    }
+    if(event_queue)
+    {
+            //eventq_dump();
+            deb_count++;
             if(event_queue->rs->dl1_miss)
             {
               global_dl1_penalty++;
             }
-      }
+            if (event_queue->rs->op_miss)
+            {
+              global_unit_penalty++;
+            }
+    }
 /*
       if(RUU_num == RUU_size)
       {
@@ -4961,9 +4994,9 @@ sim_main(void)
       /* finish early? */
       if (max_insts && sim_num_insn >= max_insts)
       {
-        printf("%d %d %d %d %d %d %d %d\n", global_l1i_penalty, global_l2i_penalty, 
+        printf("%d %d %d %d %d %d %d %d count : %d\n", global_l1i_penalty, global_l2i_penalty, 
             global_itlb_penalty, global_dl1_penalty, global_dl2_penalty, global_dtlb_penalty,
-            global_branch_mispenalty, global_unit_penalty);
+            global_branch_mispenalty, global_unit_penalty, deb_count);
         return;
       }
       if (program_complete) 
