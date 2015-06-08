@@ -504,7 +504,11 @@ dl2_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
 {
   /* this is a miss to the lowest level, so access main memory */
   if (cmd == Read)
-    return mem_access_latency(bsize);
+  {
+    if(mem_lat[1] == 0)
+      return cache_dl2_lat;
+      return mem_access_latency(bsize);
+  }
   else
     {
       /* FIXME: unlimited write buffers */
@@ -556,6 +560,9 @@ il2_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
   /* this is a miss to the lowest level, so access main memory */
   if (cmd == Read)
   {
+    if(mem_lat[1] == 0)
+      return cache_il2_lat;
+    
     lat = mem_access_latency(bsize);
     return lat;
   }
@@ -2893,7 +2900,7 @@ ruu_issue(void)
         {
           rs->dl1_miss = 1;
         }
-        if(cache_dl2_lat == 1)
+        if((load_lat > cache_dl1_lat) && cache_dl2_lat == 1)
         {
           load_lat = cache_dl1_lat;
         }
@@ -4462,7 +4469,7 @@ ruu_fetch(void)
       else
         FMT[FMT_fetch].l1i_cache_penalty += lat;
     }
-    if(cache_il2_lat == 1)
+    if(lat > cache_il1_lat && cache_il2_lat == 1)
         lat = cache_il1_lat;
     /*
     if ((lat <= cache_il2_lat) && (lat > cache_il1_lat))
@@ -4864,14 +4871,10 @@ sim_main(void)
 
       int i = 0;
 
-      if(RUU_num != RUU_size)
-      {
-        for(i = 0; i < (FMT_dispatch_tail - FMT_dispatch_head + FMT_size) % FMT_size; i++)
-        {
-          FMT[(i + FMT_dispatch_head + 1) % FMT_size].branch_penalty++;
-        }
+//      if(RUU_num != RUU_size && LSQ_num != LSQ_size)
+//      {
 
-      }
+ //     }
     /*
       if(FMT_dispatch_tail > FMT_dispatch_head)
       {
@@ -4898,10 +4901,11 @@ sim_main(void)
 */
       static int counter;
       //  printf("RUU_num , RUU_size :  %d %d \n", RUU_num, RUU_size);
-      if(event_queue && event_queue->x.when > sim_cycle + cache_dl1_lat)
-    {
-      if(RUU_num == RUU_size)
+//      if(event_queue && event_queue->x.when > sim_cycle + cache_dl1_lat)
+      if(RUU_num == RUU_size || LSQ_num == LSQ_size)
       {
+        if(event_queue)
+        {
             if(event_queue->rs->dl2_miss)
             {
 //              printf("dl2 %d %d\n", global_dl2_penalty, sim_cycle);
@@ -4911,14 +4915,16 @@ sim_main(void)
             {
               global_dtlb_penalty++;
             }
-            else
-            {
-               if(!event_queue->rs->op_miss && !event_queue->rs->dl1_miss)
-                 panic("some is wrong!");
+        }
+      }
+      else
+      {
+        for(i = 0; i < (FMT_dispatch_tail - FMT_dispatch_head + FMT_size) % FMT_size; i++)
+        {
+          FMT[(i + FMT_dispatch_head + 1) % FMT_size].branch_penalty++;
+        }
 
-            }
-       }
-    }
+      }
     if(event_queue)
     {
             //eventq_dump();
